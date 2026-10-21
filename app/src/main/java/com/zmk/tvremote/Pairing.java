@@ -74,6 +74,12 @@ final class Pairing {
         return prefs.getStringSet(TOKENS, new HashSet<>()).size();
     }
 
+    /** Forgets one phone, the one asking. */
+    synchronized void forget(String token) {
+        Set<String> all = new HashSet<>(prefs.getStringSet(TOKENS, new HashSet<>()));
+        if (all.remove(token)) prefs.edit().putStringSet(TOKENS, all).apply();
+    }
+
     void forgetAll() {
         prefs.edit().remove(TOKENS).apply();
     }

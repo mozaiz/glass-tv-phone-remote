@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
  * milliseconds instead of starting {@code input keyevent} every time.
  *
  * Commands: {@code key <code>}, {@code long <code>}, {@code text <chars>}, {@code start <component> <category>},
- * {@code pin}. Anything else is ignored.
+ * {@code view <channel uri>}, {@code pin}. Anything else is ignored.
  */
 public final class Injector {
     private static Object inputManager;
@@ -65,6 +65,11 @@ public final class Injector {
                 run("am", "start", "-a", "android.intent.action.MAIN", "-c", parts[1], "-n", parts[0]);
                 break;
             }
+            case "view":
+                // An input's channel URI; the TV's Live TV app switches to it (Glass TV does the same).
+                run("am", "start", "-a", "android.intent.action.VIEW", "-d", arg.trim(),
+                        "-t", "vnd.android.cursor.item/channel");
+                break;
             case "pin":
                 run("am", "start", "-n", "com.zmk.tvremote/.PinActivity");
                 break;

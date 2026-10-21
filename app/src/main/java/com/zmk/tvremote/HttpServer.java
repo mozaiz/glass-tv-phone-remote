@@ -234,6 +234,40 @@ final class HttpServer {
                 command(out, "start " + target[0] + " " + target[1]);
                 return;
             }
+            case "/api/inputs": {
+                JSONArray list = new JSONArray();
+                for (TvInputs.Input in : TvInputs.list(svc)) {
+                    list.put(new JSONObject().put("id", in.id).put("label", in.label).put("kind", in.kind)
+                            .put("state", in.state));
+                }
+                String sw = TvInputs.switcher(svc);
+                json(out, 200, new JSONObject().put("inputs", list).put("canSwitch", sw != null).toString(), null);
+                return;
+            }
+            case "/api/input": {
+                if (!post) break;
+                TvInputs.Input in = TvInputs.find(svc, r.params.get("id"));
+                if (in == null) {
+                    json(out, 404, "{\"error\":\"This TV has no such input\"}", null);
+                    return;
+                }
+                if (TvInputs.switcher(svc) == null) {
+                    json(out, 409, "{\"error\":\"No app on this TV switches inputs. Use the Input button instead.\"}", null);
+                    return;
+                }
+                command(out, "view " + TvInputs.uri(in.id));
+                return;
+            }
+            case "/api/unpair": {
+                if (!post) break;
+                svc.pairing.forget(cookie(r, "rt"));
+                json(out, 200, "{\"ok\":true}", "Set-Cookie: rt=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n");
+                return;
+            }
+            case "/api/tvinfo": {
+                json(out, 200, TvInputs.info(svc).toString(), null);
+                return;
+            }
             case "/api/apps": {
                 JSONArray list = new JSONArray();
                 for (App a : apps()) list.put(new JSONObject().put("pkg", a.pkg).put("label", a.label));
@@ -333,7 +367,7 @@ final class HttpServer {
 
     private static void send(OutputStream out, int status, String type, byte[] body, String extra) throws IOException {
         String reason = status == 200 ? "OK" : status == 401 ? "Unauthorized" : status == 403 ? "Forbidden"
-                : status == 404 ? "Not Found" : status == 429 ? "Too Many Requests" : "Service Unavailable";
+                : status == 404 ? "Not Found" : status == 409 ? "Conflict" : status == 429 ? "Too Many Requests" : "Service Unavailable";
         String head = "HTTP/1.1 " + status + " " + reason + "\r\n"
                 + "Content-Type: " + type + "\r\n"
                 + "Content-Length: " + body.length + "\r\n"

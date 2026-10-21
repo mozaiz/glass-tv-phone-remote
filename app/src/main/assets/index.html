@@ -22,8 +22,9 @@
   h1 { font-size: 18px; font-weight: 600; margin: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
   .dot.on { background: var(--ok); } .dot.off { background: var(--warn); }
+  .st .dot { margin-right: 5px; }
   #conn { font-size: 13px; color: var(--muted); }
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border-radius: 12px; padding: 4px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--panel); border-radius: 12px; padding: 4px; }
   .tabs button { background: none; border: 0; color: var(--muted); font: inherit; padding: 9px; border-radius: 9px; }
   .tabs button.sel { background: var(--key-hi); color: var(--text); }
   button.k { background: var(--key); color: var(--text); border: 0; border-radius: 16px; font: inherit;
@@ -32,6 +33,23 @@
   button.k:active, button.k.down { background: var(--key-hi); transform: scale(.96); }
   button.k svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .row4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .row4 button.k { flex-direction: column; gap: 2px; font-size: 12px; height: 60px; }
+  .inputs { display: flex; flex-direction: column; gap: 10px; }
+  .input { background: var(--key); color: var(--text); border: 0; border-radius: 16px; font: inherit;
+    display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 60px; text-align: left; }
+  .input:active { background: var(--key-hi); }
+  .input .tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    background: var(--panel); color: var(--muted); border-radius: 6px; padding: 3px 6px; min-width: 52px; text-align: center; }
+  .input .name { flex: 1; }
+  .input .st { font-size: 12px; color: var(--muted); display: flex; align-items: center; }
+  .empty { color: var(--muted); text-align: center; padding: 18px 8px; margin: 0; }
+  details.info { background: var(--panel); border-radius: 14px; padding: 12px 14px; margin-top: 18px; }
+  details.info summary { color: var(--muted); font-size: 14px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin-top: 12px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-all; }
+  .raw { font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre-wrap;
+    word-break: break-all; -webkit-user-select: text; user-select: text; margin: 12px 0 0; }
   .pad { position: relative; width: min(84vw, 300px); aspect-ratio: 1; margin: 6px auto; border-radius: 50%;
     background: var(--panel); }
   .pad button { position: absolute; background: none; border: 0; color: var(--text); display: flex;
@@ -94,12 +112,14 @@
     <nav class="tabs">
       <button class="sel" data-tab="remote">Remote</button>
       <button data-tab="apps">Apps</button>
+      <button data-tab="inputs">Inputs</button>
     </nav>
 
     <section id="remote" style="display:flex;flex-direction:column;gap:18px">
-      <div class="row3">
+      <div class="row4">
         <button class="k" data-key="4"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>Back</button>
         <button class="k" data-key="3"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</button>
+        <button class="k" data-key="178" aria-label="Input: the TV's own source menu"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4M10 9l2 2-2 2"/></svg>Input</button>
         <button class="k" data-key="82"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</button>
       </div>
 
@@ -136,6 +156,16 @@
 
     <section id="apps" hidden>
       <div class="apps" id="appGrid"></div>
+    </section>
+
+    <section id="inputs" hidden>
+      <div class="inputs" id="inputList"></div>
+      <details class="info" id="tvInfo">
+        <summary>TV info</summary>
+        <dl class="kv" id="tvInfoKv"></dl>
+        <pre class="raw" id="tvInfoRaw"></pre>
+        <button class="k" id="unpair" style="width:100%;margin-top:12px;height:44px">Forget this phone</button>
+      </details>
     </section>
   </div>
 </main>
@@ -233,10 +263,67 @@ $('#text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preve
 let appsLoaded = false;
 document.querySelectorAll('.tabs button').forEach((t) => t.addEventListener('click', () => {
   document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('sel', x === t));
-  $('#remote').hidden = t.dataset.tab !== 'remote';
-  $('#apps').hidden = t.dataset.tab !== 'apps';
+  for (const id of ['remote', 'apps', 'inputs']) $('#' + id).hidden = t.dataset.tab !== id;
   if (t.dataset.tab === 'apps' && !appsLoaded) loadApps();
+  if (t.dataset.tab === 'inputs') loadInputs();
 }));
+
+// ---- inputs ----
+const KIND = { hdmi: 'HDMI', av: 'AV', tuner: 'TV', component: 'YPbPr', 's-video': 'S-Video', scart: 'SCART',
+  vga: 'VGA', dvi: 'DVI', displayport: 'DP', other: 'Input' };
+const STATE = { connected: 'Connected', standby: 'Standby', disconnected: 'Nothing plugged in', unknown: '' };
+
+async function loadInputs() {
+  const list = $('#inputList');
+  const r = await api('/api/inputs').catch(() => null);
+  if (!r || !r.ok) { list.innerHTML = '<p class="empty">Could not read the TV\'s inputs.</p>'; return; }
+  list.innerHTML = '';
+  const { inputs, canSwitch } = r.data;
+  if (!inputs.length) {
+    const p = document.createElement('p'); p.className = 'empty';
+    p.textContent = 'This TV or box reports no HDMI, AV or tuner inputs. If it has some, the Input button on the Remote tab opens its own source menu.';
+    list.append(p);
+  }
+  for (const i of inputs) {
+    const b = document.createElement('button'); b.className = 'input';
+    const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = KIND[i.kind] || 'Input';
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = i.label;
+    const st = document.createElement('span'); st.className = 'st';
+    if (STATE[i.state]) {
+      const d = document.createElement('span');
+      d.className = 'dot ' + (i.state === 'connected' ? 'on' : i.state === 'standby' ? 'off' : '');
+      st.append(d, STATE[i.state]);
+    }
+    b.append(tag, name, st);
+    b.addEventListener('click', async () => {
+      buzz();
+      const res = await api('/api/input', { id: i.id }).catch(() => null);
+      toast(res && res.ok ? 'Switching to ' + i.label : (res && res.data.error) || 'Could not switch input');
+    });
+    list.append(b);
+  }
+  if (inputs.length && !canSwitch) {
+    const p = document.createElement('p'); p.className = 'empty';
+    p.textContent = 'No app on this TV takes input switches, so use the Input button on the Remote tab.';
+    list.append(p);
+  }
+  loadTvInfo();
+}
+
+async function loadTvInfo() {
+  const r = await api('/api/tvinfo').catch(() => null);
+  if (!r || !r.ok) return;
+  const d = r.data, kv = $('#tvInfoKv'); kv.innerHTML = '';
+  const rows = [['Model', d.model + ' (' + d.device + ')'], ['Android', d.android],
+    ['TV input service', d.tvInputService ? 'yes' : 'no'], ['Live TV feature', d.liveTv ? 'yes' : 'no'],
+    ['Input switcher', d.switcher || 'none'], ['Inputs reported', String(d.inputs.length)]];
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    kv.append(dt, dd);
+  }
+  $('#tvInfoRaw').textContent = JSON.stringify(d.inputs, null, 2);
+}
 
 async function loadApps() {
   const r = await api('/api/apps').catch(() => null);
@@ -257,6 +344,12 @@ async function loadApps() {
     grid.append(b);
   }
 }
+
+$('#unpair').addEventListener('click', async () => {
+  if (!confirm('Forget this phone? You will need a new code from the TV to use it again.')) return;
+  await api('/api/unpair', {}).catch(() => null);
+  showPair();
+});
 
 // ---- pairing ----
 const pinInputs = [...document.querySelectorAll('#pin input')];

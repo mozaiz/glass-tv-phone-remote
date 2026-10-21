@@ -19,6 +19,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- The app that switches TV inputs (the Live TV app), for TV info and the Inputs tab. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:mimeType="vnd.android.cursor.item/channel" />
+        </intent>
     </queries>
 
     <application

@@ -14,11 +14,17 @@ Made as an add-on for [Glass TV](https://github.com/cocombee/glass-tv), but it w
 
 ## What you get
 
-- **Remote tab:** Back, Home, Menu; a round D-pad that repeats while held; OK, where a hold is a real
-  long press (Glass TV's Move / App info menu opens from the phone); volume and mute; rewind,
-  play/pause, fast-forward; Delete, Enter and Settings.
+- **Remote tab:** Back, Home, Input, Menu; a round D-pad that repeats while held; OK, where a hold is
+  a real long press (Glass TV's Move / App info menu opens from the phone); volume and mute; rewind,
+  play/pause, fast-forward; Delete, Enter and Settings. **Input** sends the remote's Input/Source key,
+  so the TV opens its own source menu.
 - **Type on the TV:** text you type on the phone goes into whatever field has focus on the TV.
 - **Apps tab:** every app the TV can open, TV apps and phone-only apps alike, with its icon.
+- **Inputs tab:** on a TV (Xiaomi, TCL, Sony…), its HDMI ports, AV and tuner with a dot for what is
+  plugged in; one tap switches. Streaming boxes have no inputs and say so.
+- **TV info** (under Inputs): what the TV reports about its inputs and which app switches them. If
+  switching doesn't work on your TV, a screenshot of this is the most useful thing to put in an issue.
+  **Forget this phone** is there too.
 - **Fast:** about 40 ms from tap to key press on the TV over Wi-Fi.
 - **Starts with the box:** after a reboot the page is back within a minute, with nothing to open.
 
@@ -31,12 +37,19 @@ tick **Always allow**) and starts a tiny helper from its own APK with `app_proce
 through Android's InputManager, so a press costs milliseconds instead of starting `input keyevent`.
 Apps are opened with `am start`.
 
+Inputs come from Android's TV input framework (`TvInputManager`), the same way
+[Glass TV](https://github.com/cocombee/glass-tv)'s Inputs menu reads them on Xiaomi, TCL and Sony sets.
+Switching is the standard `ACTION_VIEW` on the input's channel URI
+(`content://android.media.tv/passthrough/<input id>`, type `vnd.android.cursor.item/channel`), which
+the TV's Live TV app handles (on Xiaomi, `com.mitv.livetv`).
+
 - `RemoteService`: foreground service started at boot; owns the web server and the link.
 - `HttpServer`: a small HTTP/1.1 server for the page and its JSON API.
 - `Adb`: one long-lived connection to the box's debugging service (protocol adapted from Glass TV's
   `CacheCleaner`, MIT).
 - `Injector`: the helper that runs as the shell user and presses keys.
 - `Pairing`: 4-digit codes and per-phone tokens.
+- `TvInputs`: the TV's inputs, their state, and which app switches them.
 - `app/src/main/assets/index.html`: the phone page, one file, no dependencies.
 
 ## Security
@@ -75,6 +88,17 @@ Uninstall: `adb shell pm uninstall com.zmk.tvremote`.
 A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, with Glass TV as Home:
 pairing, keys, long press, typing into a TV text field, the app list and launching, and starting again
 after a reboot.
+
+Input switching, on the same box (which has no HDMI inputs of its own):
+- The Input key reaches Android's input dispatcher (`KEYCODE_TV_INPUT`, 178).
+- With no inputs, the Inputs tab says so and an unknown input id is refused.
+- With a test app that registers a TV input and takes the switch intent the way a Live TV app does,
+  the input is listed with its label and state, and a tap delivers exactly `ACTION_VIEW`,
+  `vnd.android.cursor.item/channel`, `content://android.media.tv/passthrough/<id>`, with the id intact.
+
+**Not yet tried on a real TV with HDMI ports.** Only a TV's own system can create HDMI inputs, so no box
+or emulator can stand in for that last step. If you have a Xiaomi, TCL or Sony Android TV, please try
+the Inputs tab and open an issue with what happened and a screenshot of TV info.
 
 ## Licence
 
