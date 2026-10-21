@@ -73,8 +73,8 @@ Uninstall: `adb shell pm uninstall com.zmk.tvremote`.
 ## Tested on
 
 A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, with Glass TV as Home:
-pairing, keys, long press, the app list and launching, and starting again after a reboot. Typing
-into a TV text field has not been tried on a device yet.
+pairing, keys, long press, typing into a TV text field, the app list and launching, and starting again
+after a reboot.
 
 ## Licence
 
