@@ -7,8 +7,10 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 
 import java.net.Inet4Address;
@@ -26,6 +28,8 @@ public final class RemoteService extends Service {
     Adb adb;
     Pairing pairing;
     private HttpServer http;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     static void start(Context ctx) {
         Intent i = new Intent(ctx, RemoteService.class);
@@ -45,6 +49,18 @@ public final class RemoteService extends Service {
                 .build();
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(1, n);
+
+        // While the TV sleeps, keep the CPU and Wi-Fi up so a phone can still reach the box and wake it.
+        // Without these the box drops off the network a few minutes after sleeping. TV boxes run on
+        // mains power, so the cost is a few watts at most.
+        PowerManager pm = getSystemService(PowerManager.class);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TvRemote:server");
+        wakeLock.acquire();
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm != null) {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "TvRemote:server");
+            wifiLock.acquire();
+        }
 
         adb = new Adb(this);
         pairing = new Pairing(this);
@@ -70,6 +86,8 @@ public final class RemoteService extends Service {
         instance = null;
         if (http != null) http.stop();
         if (adb != null) adb.close();
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
         super.onDestroy();
     }
 

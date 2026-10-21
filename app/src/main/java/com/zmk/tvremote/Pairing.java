@@ -9,14 +9,15 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Which phones may use the remote. A phone asks for a code, the TV shows 4 digits, and the phone that
- * types them gets a long random token kept in a cookie. A code lasts two minutes and five wrong
- * guesses throw it away.
+ * Who may use the remote. A phone asks for a code, the TV shows 4 digits, and the phone that types them
+ * gets a long random token kept in a cookie. A code lasts two minutes and five wrong guesses throw it
+ * away. A paired phone can also make Shortcuts keys: the same kind of token, sent as
+ * {@code Authorization: Bearer <key>} by Siri Shortcuts or a script, and listed apart from phones.
  */
 final class Pairing {
     private static final long PIN_MS = 120_000;
     private static final int MAX_TRIES = 5;
-    private static final String PREFS = "pairing", TOKENS = "tokens";
+    private static final String PREFS = "pairing", TOKENS = "tokens", KEYS = "keys";
 
     private final SharedPreferences prefs;
     private final SecureRandom random = new SecureRandom();
@@ -32,10 +33,6 @@ final class Pairing {
     synchronized String currentPin() {
         if (pin != null && System.currentTimeMillis() > pinUntil) pin = null;
         return pin;
-    }
-
-    synchronized long pinMillisLeft() {
-        return currentPin() == null ? 0 : pinUntil - System.currentTimeMillis();
     }
 
     /** Makes a new code unless one is still showing. */
@@ -56,31 +53,49 @@ final class Pairing {
             return null;
         }
         pin = null;
+        return add(TOKENS);
+    }
+
+    /** A new key for Siri Shortcuts or scripts. */
+    synchronized String newKey() {
+        return add(KEYS);
+    }
+
+    private String add(String set) {
         byte[] b = new byte[32];
         random.nextBytes(b);
         StringBuilder token = new StringBuilder();
         for (byte x : b) token.append(String.format(Locale.US, "%02x", x & 0xff));
-        Set<String> all = new HashSet<>(prefs.getStringSet(TOKENS, new HashSet<>()));
+        Set<String> all = new HashSet<>(prefs.getStringSet(set, new HashSet<>()));
         all.add(token.toString());
-        prefs.edit().putStringSet(TOKENS, all).apply();
+        prefs.edit().putStringSet(set, all).apply();
         return token.toString();
     }
 
     boolean allowed(String token) {
-        return token != null && !token.isEmpty() && prefs.getStringSet(TOKENS, new HashSet<>()).contains(token);
+        if (token == null || token.isEmpty()) return false;
+        return prefs.getStringSet(TOKENS, new HashSet<>()).contains(token)
+                || prefs.getStringSet(KEYS, new HashSet<>()).contains(token);
     }
 
     int phones() {
         return prefs.getStringSet(TOKENS, new HashSet<>()).size();
     }
 
-    /** Forgets one phone, the one asking. */
-    synchronized void forget(String token) {
-        Set<String> all = new HashSet<>(prefs.getStringSet(TOKENS, new HashSet<>()));
-        if (all.remove(token)) prefs.edit().putStringSet(TOKENS, all).apply();
+    int keys() {
+        return prefs.getStringSet(KEYS, new HashSet<>()).size();
     }
 
+    /** Forgets one phone or key, the one asking. */
+    synchronized void forget(String token) {
+        for (String set : new String[]{TOKENS, KEYS}) {
+            Set<String> all = new HashSet<>(prefs.getStringSet(set, new HashSet<>()));
+            if (all.remove(token)) prefs.edit().putStringSet(set, all).apply();
+        }
+    }
+
+    /** Forgets every phone and every Shortcuts key. */
     void forgetAll() {
-        prefs.edit().remove(TOKENS).apply();
+        prefs.edit().remove(TOKENS).remove(KEYS).apply();
     }
 }

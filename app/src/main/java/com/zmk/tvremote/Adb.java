@@ -27,6 +27,9 @@ import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAKeyGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * One long-lived connection to the box's own debugging service (127.0.0.1:5555) running {@link Injector}.
@@ -166,7 +169,7 @@ final class Adb {
             while (true) {
                 Message m = read(in);
                 if (m.cmd == WRTE) {
-                    Log.i(TAG, "helper: " + new String(m.data, StandardCharsets.UTF_8).trim());
+                    lines(new String(m.data, StandardCharsets.UTF_8));
                     send(OKAY, LOCAL_ID, remoteId, null);
                 } else if (m.cmd == OKAY) {
                     synchronized (ackLock) {
@@ -186,6 +189,36 @@ final class Adb {
             synchronized (ackLock) {
                 acked = true;
                 ackLock.notifyAll();
+            }
+        }
+    }
+
+    /** The helper's output arrives in pieces; whole lines go to their waiter or the log. */
+    private final StringBuilder partial = new StringBuilder();
+    private final BlockingQueue<String> shots = new LinkedBlockingQueue<>();
+
+    private void lines(String chunk) {
+        partial.append(chunk);
+        int nl;
+        while ((nl = partial.indexOf("\n")) >= 0) {
+            String line = partial.substring(0, nl).trim();
+            partial.delete(0, nl + 1);
+            if (line.startsWith("shot")) shots.offer(line.substring(4).trim());
+            else if (!line.isEmpty()) Log.i(TAG, "helper: " + line);
+        }
+    }
+
+    /** A JPEG of the screen, or null when the helper did not answer within a few seconds. */
+    byte[] screenshot() throws IOException {
+        synchronized (shots) {
+            shots.clear();
+            command("shot");
+            try {
+                String b64 = shots.poll(6, TimeUnit.SECONDS);
+                if (b64 == null || b64.isEmpty()) return null;
+                return Base64.decode(b64, Base64.DEFAULT);
+            } catch (InterruptedException e) {
+                return null;
             }
         }
     }

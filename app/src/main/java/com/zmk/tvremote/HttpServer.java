@@ -1,11 +1,15 @@
 package com.zmk.tvremote;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.os.PowerManager;
+import android.util.Base64;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -13,14 +17,18 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,26 +41,31 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * A small HTTP/1.1 server for the phone page and its API. One request per connection.
+ * A small HTTP/1.1 server for the phone page, its API and one WebSocket per open page.
  *
- * Every API call but the pairing ones needs the phone's token cookie. POSTs also need an
- * {@code X-Remote} header, which a page on another site cannot send without a preflight this server
- * never answers, so other websites open on the phone cannot press keys.
+ * Every API call but pairing needs a token: the phone's cookie, or {@code Authorization: Bearer <key>}
+ * from a Shortcuts key. POSTs also need an {@code X-Remote} header, which a page on another site cannot
+ * send without a CORS preflight this server never answers, and the WebSocket only accepts its own
+ * origin, so other websites open on the phone cannot press keys.
  */
 final class HttpServer {
     private static final String TAG = "TvRemote.Http";
     private static final String LEANBACK = Intent.CATEGORY_LEANBACK_LAUNCHER, LAUNCHER = Intent.CATEGORY_LAUNCHER;
+    private static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    private static final int MAX_FAVOURITES = 6;
 
     private final RemoteService svc;
     private final int port;
-    private final ExecutorService pool = Executors.newFixedThreadPool(6);
+    private final ExecutorService pool = Executors.newCachedThreadPool();
     private final Map<String, byte[]> icons = new ConcurrentHashMap<>();
+    private final SharedPreferences prefs;
     private ServerSocket server;
     private volatile long lastPinRequest;
 
     HttpServer(RemoteService svc, int port) {
         this.svc = svc;
         this.port = port;
+        prefs = svc.getSharedPreferences("remote", Context.MODE_PRIVATE);
     }
 
     void start() throws IOException {
@@ -92,6 +105,10 @@ final class HttpServer {
             OutputStream out = socket.getOutputStream();
             Request r = parse(in);
             if (r == null) return;
+            if ("/ws".equals(r.path) && "websocket".equalsIgnoreCase(r.headers.get("upgrade"))) {
+                websocket(r, socket, in, out);
+                return;
+            }
             route(r, out);
         } catch (Exception e) {
             Log.i(TAG, "request failed: " + e);
@@ -156,20 +173,47 @@ final class HttpServer {
         return null;
     }
 
+    /** The phone's cookie, or a Shortcuts key sent as a bearer token. */
+    private static String token(Request r) {
+        String auth = r.headers.get("authorization");
+        if (auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7)) return auth.substring(7).trim();
+        return cookie(r, "rt");
+    }
+
     private void route(Request r, OutputStream out) throws Exception {
         boolean post = "POST".equals(r.method);
         if (post && r.headers.get("x-remote") == null) {
             send(out, 403, "text/plain", "forbidden".getBytes(StandardCharsets.UTF_8), null);
             return;
         }
-        if ("GET".equals(r.method) && ("/".equals(r.path) || "/index.html".equals(r.path))) {
-            send(out, 200, "text/html; charset=utf-8", asset("index.html"), null);
-            return;
+        if ("GET".equals(r.method)) {
+            switch (r.path) {
+                case "/":
+                case "/index.html":
+                    send(out, 200, "text/html; charset=utf-8", asset("index.html"), null);
+                    return;
+                case "/manifest.webmanifest":
+                    send(out, 200, "application/manifest+json", manifest(), null);
+                    return;
+                case "/icon.png": {
+                    int size = 192;
+                    try {
+                        size = Math.max(48, Math.min(512, Integer.parseInt(r.params.getOrDefault("s", "192"))));
+                    } catch (NumberFormatException ignored) {
+                    }
+                    send(out, 200, "image/png", appIcon(size), "Cache-Control: max-age=604800\r\n");
+                    return;
+                }
+                default:
+                    break;
+            }
         }
-        boolean paired = svc.pairing.allowed(cookie(r, "rt"));
+        String token = token(r);
+        boolean paired = svc.pairing.allowed(token);
         switch (r.path) {
             case "/api/status": {
-                JSONObject o = new JSONObject().put("paired", paired).put("tv", svc.adb.alive()).put("state", svc.adb.state());
+                JSONObject o = new JSONObject().put("paired", paired).put("tv", svc.adb.alive())
+                        .put("state", svc.adb.state()).put("awake", awake());
                 json(out, 200, o.toString(), null);
                 return;
             }
@@ -193,13 +237,13 @@ final class HttpServer {
             }
             case "/api/pair/confirm": {
                 if (!post) break;
-                String token = svc.pairing.confirm(r.params.get("pin"));
-                if (token == null) {
+                String t = svc.pairing.confirm(r.params.get("pin"));
+                if (t == null) {
                     json(out, 401, "{\"error\":\"wrong code\"}", null);
                     return;
                 }
                 json(out, 200, "{\"ok\":true}",
-                        "Set-Cookie: rt=" + token + "; Max-Age=315360000; Path=/; HttpOnly; SameSite=Strict\r\n");
+                        "Set-Cookie: rt=" + t + "; Max-Age=315360000; Path=/; HttpOnly; SameSite=Strict\r\n");
                 return;
             }
             default:
@@ -212,16 +256,16 @@ final class HttpServer {
         switch (r.path) {
             case "/api/key": {
                 if (!post) break;
-                int code = Integer.parseInt(r.params.getOrDefault("code", "0"));
-                if (code <= 0 || code > 400) break;
-                command(out, ("1".equals(r.params.get("long")) ? "long " : "key ") + code);
+                String line = keyLine(r.params.get("code"), "1".equals(r.params.get("long")));
+                if (line == null) break;
+                command(out, line);
                 return;
             }
             case "/api/text": {
                 if (!post) break;
-                String t = r.params.getOrDefault("t", "").replace('\n', ' ').replace('\r', ' ');
-                if (t.isEmpty() || t.length() > 500) break;
-                command(out, "text " + t);
+                String line = textLine(r.params.get("t"));
+                if (line == null) break;
+                command(out, line);
                 return;
             }
             case "/api/launch": {
@@ -232,6 +276,53 @@ final class HttpServer {
                     return;
                 }
                 command(out, "start " + target[0] + " " + target[1]);
+                return;
+            }
+            case "/api/apps": {
+                JSONArray list = new JSONArray();
+                for (App a : apps()) list.put(new JSONObject().put("pkg", a.pkg).put("label", a.label));
+                json(out, 200, list.toString(), null);
+                return;
+            }
+            case "/api/icon": {
+                byte[] png = icon(r.params.get("pkg"));
+                if (png == null) break;
+                send(out, 200, "image/png", png, "Cache-Control: max-age=86400\r\n");
+                return;
+            }
+            case "/api/favorites": {
+                if (post) {
+                    List<String> want = new ArrayList<>();
+                    Set<String> known = new HashSet<>();
+                    for (App a : apps()) known.add(a.pkg);
+                    for (String p : r.params.getOrDefault("list", "").split(",")) {
+                        p = p.trim();
+                        if (known.contains(p) && !want.contains(p) && want.size() < MAX_FAVOURITES) want.add(p);
+                    }
+                    prefs.edit().putString("favourites", android.text.TextUtils.join(",", want)).apply();
+                }
+                JSONArray list = new JSONArray();
+                Map<String, App> byPkg = new HashMap<>();
+                for (App a : apps()) byPkg.put(a.pkg, a);
+                for (String p : favourites()) {
+                    App a = byPkg.get(p);
+                    if (a != null) list.put(new JSONObject().put("pkg", a.pkg).put("label", a.label));
+                }
+                json(out, 200, list.toString(), null);
+                return;
+            }
+            case "/api/screen.jpg": {
+                byte[] jpg;
+                try {
+                    jpg = svc.adb.screenshot();
+                } catch (IOException e) {
+                    jpg = null;
+                }
+                if (jpg == null) {
+                    json(out, 503, "{\"error\":\"no screenshot\"}", null);
+                    return;
+                }
+                send(out, 200, "image/jpeg", jpg, null);
                 return;
             }
             case "/api/inputs": {
@@ -258,32 +349,49 @@ final class HttpServer {
                 command(out, "view " + TvInputs.uri(in.id));
                 return;
             }
+            case "/api/shortcut-key": {
+                if (!post) break;
+                json(out, 200, new JSONObject().put("key", svc.pairing.newKey()).toString(), null);
+                return;
+            }
             case "/api/unpair": {
                 if (!post) break;
-                svc.pairing.forget(cookie(r, "rt"));
+                svc.pairing.forget(token);
                 json(out, 200, "{\"ok\":true}", "Set-Cookie: rt=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n");
                 return;
             }
             case "/api/tvinfo": {
-                json(out, 200, TvInputs.info(svc).toString(), null);
-                return;
-            }
-            case "/api/apps": {
-                JSONArray list = new JSONArray();
-                for (App a : apps()) list.put(new JSONObject().put("pkg", a.pkg).put("label", a.label));
-                json(out, 200, list.toString(), null);
-                return;
-            }
-            case "/api/icon": {
-                byte[] png = icon(r.params.get("pkg"));
-                if (png == null) break;
-                send(out, 200, "image/png", png, "Cache-Control: max-age=86400\r\n");
+                json(out, 200, TvInputs.info(svc).put("shortcutKeys", svc.pairing.keys()).toString(), null);
                 return;
             }
             default:
                 break;
         }
         json(out, 404, "{\"error\":\"not found\"}", null);
+    }
+
+    /** The helper command for a key press, or null when the code is not a key. */
+    private String keyLine(String code, boolean hold) {
+        int c;
+        try {
+            c = Integer.parseInt(code == null ? "0" : code.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (c <= 0 || c > 400) return null;
+        // POWER puts some boxes into a standby that cuts Wi-Fi, and then no phone can wake them.
+        // SLEEP keeps the network up (with the service's wake lock), and WAKEUP brings the screen back.
+        if (c == android.view.KeyEvent.KEYCODE_POWER) {
+            c = awake() ? android.view.KeyEvent.KEYCODE_SLEEP : android.view.KeyEvent.KEYCODE_WAKEUP;
+        }
+        return (hold ? "long " : "key ") + c;
+    }
+
+    private static String textLine(String t) {
+        if (t == null) return null;
+        t = t.replace('\n', ' ').replace('\r', ' ');
+        if (t.isEmpty() || t.length() > 500) return null;
+        return "text " + t;
     }
 
     private void command(OutputStream out, String line) throws Exception {
@@ -294,6 +402,108 @@ final class HttpServer {
             json(out, 503, new JSONObject().put("error", e.getMessage()).toString(), null);
         }
     }
+
+    private boolean awake() {
+        PowerManager pm = (PowerManager) svc.getSystemService(Context.POWER_SERVICE);
+        return pm == null || pm.isInteractive();
+    }
+
+    private List<String> favourites() {
+        String s = prefs.getString("favourites", "");
+        return s.isEmpty() ? new ArrayList<>() : new ArrayList<>(Arrays.asList(s.split(",")));
+    }
+
+    // ---- WebSocket: key presses and typing from the open page, without a new connection each ----
+
+    /**
+     * One page's socket. Each text message is {@code k:<code>}, {@code l:<code>} (held) or
+     * {@code t:<text>}; the server answers {@code ok} or {@code err:<reason>}. Only the page's own
+     * origin and a paired phone get in.
+     */
+    private void websocket(Request r, Socket socket, InputStream in, OutputStream out) throws Exception {
+        String key = r.headers.get("sec-websocket-key");
+        String origin = r.headers.get("origin"), host = r.headers.get("host");
+        boolean sameOrigin = false;
+        try {
+            sameOrigin = origin != null && host != null && host.equalsIgnoreCase(new URI(origin).getRawAuthority());
+        } catch (Exception ignored) {
+        }
+        if (key == null || !sameOrigin || !svc.pairing.allowed(token(r))) {
+            send(out, 403, "text/plain", "forbidden".getBytes(StandardCharsets.UTF_8), null);
+            return;
+        }
+        String accept = Base64.encodeToString(MessageDigest.getInstance("SHA-1")
+                .digest((key + WS_GUID).getBytes(StandardCharsets.ISO_8859_1)), Base64.NO_WRAP);
+        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                + "Sec-WebSocket-Accept: " + accept + "\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+        out.flush();
+        socket.setSoTimeout(0);
+        socket.setTcpNoDelay(true);
+        String tok = token(r);
+        DataInputStream din = new DataInputStream(in);
+        while (true) {
+            int b0 = din.readUnsignedByte(), b1 = din.readUnsignedByte();
+            int op = b0 & 0x0f;
+            long len = b1 & 0x7f;
+            if (len == 126) len = din.readUnsignedShort();
+            else if (len == 127) len = din.readLong();
+            if (len > 4096) return;
+            byte[] mask = new byte[4];
+            if ((b1 & 0x80) != 0) din.readFully(mask);
+            byte[] data = new byte[(int) len];
+            din.readFully(data);
+            for (int i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
+            if (op == 0x8) {
+                frame(out, 0x8, new byte[0]);
+                return;
+            }
+            if (op == 0x9) {
+                frame(out, 0xA, data);
+                continue;
+            }
+            if (op != 0x1) continue;
+            // A phone forgotten from the TV while its page is open loses the socket too.
+            if (!svc.pairing.allowed(tok)) {
+                frame(out, 0x8, new byte[0]);
+                return;
+            }
+            String msg = new String(data, StandardCharsets.UTF_8);
+            String line = msg.startsWith("k:") ? keyLine(msg.substring(2), false)
+                    : msg.startsWith("l:") ? keyLine(msg.substring(2), true)
+                    : msg.startsWith("t:") ? textLine(msg.substring(2)) : null;
+            String reply;
+            if (line == null) {
+                reply = "err:bad message";
+            } else {
+                try {
+                    svc.adb.command(line);
+                    reply = "ok";
+                } catch (IOException e) {
+                    reply = "err:" + e.getMessage();
+                }
+            }
+            frame(out, 0x1, reply.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    private static void frame(OutputStream out, int op, byte[] data) throws IOException {
+        ByteArrayOutputStream f = new ByteArrayOutputStream();
+        f.write(0x80 | op);
+        if (data.length < 126) {
+            f.write(data.length);
+        } else {
+            f.write(126);
+            f.write(data.length >> 8);
+            f.write(data.length & 0xff);
+        }
+        f.write(data);
+        synchronized (out) {
+            out.write(f.toByteArray());
+            out.flush();
+        }
+    }
+
+    // ---- apps ----
 
     private static final class App {
         String pkg, label, component, category;
@@ -336,19 +546,50 @@ final class HttpServer {
         for (App a : apps()) known.add(a.pkg);
         if (!known.contains(pkg)) return null;
         try {
-            Drawable d = svc.getPackageManager().getApplicationIcon(pkg);
-            Bitmap b = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
-            Canvas c = new Canvas(b);
-            d.setBounds(0, 0, 128, 128);
-            d.draw(c);
-            ByteArrayOutputStream png = new ByteArrayOutputStream();
-            b.compress(Bitmap.CompressFormat.PNG, 100, png);
-            b.recycle();
-            icons.put(pkg, png.toByteArray());
-            return png.toByteArray();
+            byte[] png = png(svc.getPackageManager().getApplicationIcon(pkg), 128);
+            icons.put(pkg, png);
+            return png;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ---- the page as an app on the phone's home screen ----
+
+    private byte[] appIcon(int size) {
+        String k = "#self" + size;
+        byte[] cached = icons.get(k);
+        if (cached != null) return cached;
+        byte[] png = png(svc.getDrawable(R.drawable.ic_remote), size);
+        icons.put(k, png);
+        return png;
+    }
+
+    private static byte[] manifest() throws Exception {
+        JSONArray icons = new JSONArray();
+        for (int s : new int[]{192, 512}) {
+            icons.put(new JSONObject().put("src", "/icon.png?s=" + s).put("sizes", s + "x" + s).put("type", "image/png"));
+        }
+        return new JSONObject()
+                .put("name", "TV Remote")
+                .put("short_name", "TV Remote")
+                .put("start_url", "/")
+                .put("display", "standalone")
+                .put("background_color", "#0d0d12")
+                .put("theme_color", "#0d0d12")
+                .put("icons", icons)
+                .toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] png(Drawable d, int size) {
+        Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        d.setBounds(0, 0, size, size);
+        d.draw(c);
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        b.compress(Bitmap.CompressFormat.PNG, 100, png);
+        b.recycle();
+        return png.toByteArray();
     }
 
     private byte[] asset(String name) throws IOException {
@@ -367,7 +608,8 @@ final class HttpServer {
 
     private static void send(OutputStream out, int status, String type, byte[] body, String extra) throws IOException {
         String reason = status == 200 ? "OK" : status == 401 ? "Unauthorized" : status == 403 ? "Forbidden"
-                : status == 404 ? "Not Found" : status == 409 ? "Conflict" : status == 429 ? "Too Many Requests" : "Service Unavailable";
+                : status == 404 ? "Not Found" : status == 409 ? "Conflict" : status == 429 ? "Too Many Requests"
+                : "Service Unavailable";
         String head = "HTTP/1.1 " + status + " " + reason + "\r\n"
                 + "Content-Type: " + type + "\r\n"
                 + "Content-Length: " + body.length + "\r\n"

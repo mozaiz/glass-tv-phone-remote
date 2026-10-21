@@ -1,5 +1,7 @@
 package com.zmk.tvremote;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.hardware.input.InputManager;
 import android.os.SystemClock;
 import android.view.InputDevice;
@@ -8,9 +10,12 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 /**
  * The part that actually presses keys. Not run inside the app: Adb starts it on the box as
@@ -20,7 +25,7 @@ import java.nio.charset.StandardCharsets;
  * milliseconds instead of starting {@code input keyevent} every time.
  *
  * Commands: {@code key <code>}, {@code long <code>}, {@code text <chars>}, {@code start <component> <category>},
- * {@code view <channel uri>}, {@code pin}. Anything else is ignored.
+ * {@code view <channel uri>}, {@code shot}, {@code pin}. Anything else is ignored.
  */
 public final class Injector {
     private static Object inputManager;
@@ -70,6 +75,9 @@ public final class Injector {
                 run("am", "start", "-a", "android.intent.action.VIEW", "-d", arg.trim(),
                         "-t", "vnd.android.cursor.item/channel");
                 break;
+            case "shot":
+                shot();
+                break;
             case "pin":
                 run("am", "start", "-n", "com.zmk.tvremote/.PinActivity");
                 break;
@@ -107,6 +115,30 @@ public final class Injector {
 
     private static void send(InputEvent event) throws Exception {
         inject.invoke(inputManager, event, 0);   // 0: asynchronous, like `input keyevent`
+    }
+
+    /**
+     * A small JPEG of the screen, printed as one line {@code shot <base64>} for the app to pick up.
+     * Protected video (Netflix and the like) comes out black, as in any screenshot.
+     */
+    private static void shot() throws Exception {
+        File png = new File("/data/local/tmp/tvremote-shot.png");
+        run("screencap", "-p", png.getPath());
+        Bitmap full = BitmapFactory.decodeFile(png.getPath());
+        png.delete();
+        if (full == null) {
+            System.out.println("shot ");
+            System.out.flush();
+            return;
+        }
+        int w = 640, h = Math.max(1, full.getHeight() * w / full.getWidth());
+        Bitmap small = Bitmap.createScaledBitmap(full, w, h, true);
+        full.recycle();
+        ByteArrayOutputStream jpg = new ByteArrayOutputStream();
+        small.compress(Bitmap.CompressFormat.JPEG, 72, jpg);
+        small.recycle();
+        System.out.println("shot " + Base64.getEncoder().encodeToString(jpg.toByteArray()));
+        System.out.flush();
     }
 
     private static void run(String... command) throws Exception {
