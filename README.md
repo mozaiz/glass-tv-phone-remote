@@ -8,6 +8,11 @@ opens with a tap. Nothing to install on the phone, no account, no cloud.
 Made as an add-on for [Glass TV](https://github.com/cocombee/glass-tv), but it works with any launcher.
 
 <p>
+  <img src="docs/phone-remote.png" width="32%" alt="The phone page's Remote tab: Back, Home, Input, Menu, a round D-pad with OK, volume and media keys, and a box for typing on the TV">
+  <img src="docs/phone-inputs.png" width="32%" alt="The phone page's Inputs tab on a streaming box, which reports no inputs, with the TV info panel below">
+</p>
+
+<p>
   <img src="docs/tv-screen.png" width="49%" alt="The Phone Remote screen on the TV: the address to open, Connected, and Forget all phones">
   <img src="docs/tv-pairing.png" width="49%" alt="The pairing screen on the TV showing a 4-digit code">
 </p>
