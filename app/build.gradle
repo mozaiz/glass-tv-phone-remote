@@ -1,0 +1,30 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.zmk.tvremote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.zmk.tvremote'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            // Not minified: Injector is started by class name through app_process, so its name must stay.
+            minifyEnabled false
+            // Sideloaded over ADB, never published.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

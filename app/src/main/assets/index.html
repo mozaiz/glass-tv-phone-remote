@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>TV Remote</title>
+<style>
+  :root {
+    --bg: #0d0d12; --panel: #191921; --key: #24242e; --key-hi: #31313d; --text: #f2f2f5;
+    --muted: #8b8b99; --accent: #ff5a4e; --ok: #7ce38b; --warn: #ffc857;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; touch-action: manipulation; overscroll-behavior: none; }
+  main { max-width: 420px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) 16px
+    max(16px, env(safe-area-inset-bottom)); min-height: 100%; display: flex; flex-direction: column; gap: 18px; }
+  header { display: flex; align-items: center; justify-content: space-between; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--warn); }
+  #conn { font-size: 13px; color: var(--muted); }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border-radius: 12px; padding: 4px; }
+  .tabs button { background: none; border: 0; color: var(--muted); font: inherit; padding: 9px; border-radius: 9px; }
+  .tabs button.sel { background: var(--key-hi); color: var(--text); }
+  button.k { background: var(--key); color: var(--text); border: 0; border-radius: 16px; font: inherit;
+    font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 6px; height: 56px;
+    transition: transform .06s, background .06s; }
+  button.k:active, button.k.down { background: var(--key-hi); transform: scale(.96); }
+  button.k svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .pad { position: relative; width: min(84vw, 300px); aspect-ratio: 1; margin: 6px auto; border-radius: 50%;
+    background: var(--panel); }
+  .pad button { position: absolute; background: none; border: 0; color: var(--text); display: flex;
+    align-items: center; justify-content: center; }
+  .pad .u, .pad .d { left: 30%; width: 40%; height: 30%; } .pad .u { top: 0; } .pad .d { bottom: 0; }
+  .pad .l, .pad .r { top: 30%; width: 30%; height: 40%; } .pad .l { left: 0; } .pad .r { right: 0; }
+  .pad svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+  .pad button.down svg, .pad button:active svg { opacity: 1; color: var(--accent); }
+  .pad .ok { left: 30%; top: 30%; width: 40%; height: 40%; border-radius: 50%; background: var(--key);
+    font-size: 17px; font-weight: 600; transition: transform .06s, background .06s; }
+  .pad .ok.down, .pad .ok:active { background: var(--accent); transform: scale(.95); }
+  .hint { text-align: center; font-size: 12px; color: var(--muted); margin-top: -8px; }
+  .type { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .type input { background: var(--panel); border: 1px solid transparent; color: var(--text); border-radius: 14px;
+    padding: 0 14px; height: 48px; font: inherit; -webkit-user-select: text; user-select: text; min-width: 0; }
+  .type input:focus { outline: none; border-color: var(--key-hi); }
+  .type button.k { height: 48px; padding: 0 16px; }
+  .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 8px; }
+  .app { background: none; border: 0; color: var(--text); font: inherit; font-size: 12px; display: flex;
+    flex-direction: column; align-items: center; gap: 6px; padding: 0; }
+  .app img { width: 56px; height: 56px; border-radius: 14px; background: var(--panel); transition: transform .08s; }
+  .app:active img { transform: scale(.92); }
+  .app span { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pair { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; text-align: center; }
+  .pair p { color: var(--muted); margin: 0; }
+  .pin { display: flex; gap: 10px; justify-content: center; }
+  .pin input { width: 56px; height: 68px; text-align: center; font-size: 30px; background: var(--panel);
+    border: 1px solid var(--key-hi); border-radius: 14px; color: var(--text); -webkit-user-select: text; user-select: text; }
+  .primary { background: var(--accent) !important; font-weight: 600; }
+  .err { color: var(--warn); min-height: 20px; font-size: 14px; }
+  .toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: #2b2b36; padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>TV Remote</h1>
+    <span id="conn"><span class="dot" id="dot"></span><span id="connText">Connecting…</span></span>
+  </header>
+
+  <!-- Pairing -->
+  <section class="pair" id="pairView" hidden>
+    <h2 style="margin:0;font-size:22px">Pair this phone</h2>
+    <p>Show a 4-digit code on the TV, then type it here. You only do this once.</p>
+    <button class="k primary" id="showCode">Show code on TV</button>
+    <div class="pin" id="pin" hidden>
+      <input inputmode="numeric" maxlength="1" autocomplete="one-time-code">
+      <input inputmode="numeric" maxlength="1">
+      <input inputmode="numeric" maxlength="1">
+      <input inputmode="numeric" maxlength="1">
+    </div>
+    <div class="err" id="pairErr"></div>
+  </section>
+
+  <!-- Remote -->
+  <div id="mainView" hidden style="display:contents">
+    <nav class="tabs">
+      <button class="sel" data-tab="remote">Remote</button>
+      <button data-tab="apps">Apps</button>
+    </nav>
+
+    <section id="remote" style="display:flex;flex-direction:column;gap:18px">
+      <div class="row3">
+        <button class="k" data-key="4"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>Back</button>
+        <button class="k" data-key="3"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</button>
+        <button class="k" data-key="82"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</button>
+      </div>
+
+      <div class="pad">
+        <button class="u" data-key="19" data-repeat aria-label="Up"><svg viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg></button>
+        <button class="l" data-key="21" data-repeat aria-label="Left"><svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg></button>
+        <button class="ok" id="ok">OK</button>
+        <button class="r" data-key="22" data-repeat aria-label="Right"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+        <button class="d" data-key="20" data-repeat aria-label="Down"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+      </div>
+      <div class="hint">Hold OK for a long press</div>
+
+      <div class="row3">
+        <button class="k" data-key="25" data-repeat aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 12h5"/></svg></button>
+        <button class="k" data-key="164" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6M21 9l-5 6"/></svg></button>
+        <button class="k" data-key="24" data-repeat aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 12h5M18.5 9.5v5"/></svg></button>
+      </div>
+      <div class="row3">
+        <button class="k" data-key="89" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 6 4 12l7 6zM20 6l-7 6 7 6z"/></svg></button>
+        <button class="k" data-key="85" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path d="M5 5v14l8-7zM16 5v14M20 5v14"/></svg></button>
+        <button class="k" data-key="90" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="m13 6 7 6-7 6zM4 6l7 6-7 6z"/></svg></button>
+      </div>
+
+      <div class="type">
+        <input id="text" placeholder="Type on the TV…" autocomplete="off" autocapitalize="off" enterkeyhint="send">
+        <button class="k" id="sendText">Send</button>
+      </div>
+      <div class="row3">
+        <button class="k" data-key="67" data-repeat>⌫ Delete</button>
+        <button class="k" data-key="66">Enter</button>
+        <button class="k" data-key="176"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Settings</button>
+      </div>
+    </section>
+
+    <section id="apps" hidden>
+      <div class="apps" id="appGrid"></div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const buzz = () => { try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} };
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+async function api(path, body) {
+  const opts = { headers: { 'X-Remote': '1' }, credentials: 'same-origin' };
+  if (body !== undefined) {
+    opts.method = 'POST';
+    opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    opts.body = new URLSearchParams(body).toString();
+  }
+  const r = await fetch(path, opts);
+  let data = {};
+  try { data = await r.json(); } catch (e) {}
+  if (r.status === 401 && path !== '/api/pair/confirm') showPair();
+  return { ok: r.ok, status: r.status, data };
+}
+
+function setConn(on, text) {
+  $('#dot').className = 'dot ' + (on ? 'on' : 'off');
+  $('#connText').textContent = text;
+}
+
+async function status() {
+  try {
+    const r = await api('/api/status');
+    setConn(r.data.tv, r.data.tv ? 'Connected' : (r.data.state || 'TV not ready'));
+    return r.data;
+  } catch (e) {
+    setConn(false, 'Box unreachable');
+    return null;
+  }
+}
+
+function showPair() { $('#pairView').hidden = false; $('#mainView').hidden = true; }
+function showMain() { $('#pairView').hidden = true; $('#mainView').hidden = false; }
+
+// ---- keys ----
+async function key(code, long) {
+  buzz();
+  const r = await api('/api/key', long ? { code, long: 1 } : { code }).catch(() => null);
+  if (!r) setConn(false, 'Box unreachable');
+  else if (!r.ok && r.status !== 401) toast(r.data.error || 'The TV did not respond');
+}
+
+document.querySelectorAll('[data-key]').forEach((b) => {
+  const code = b.dataset.key, repeat = b.hasAttribute('data-repeat');
+  let delay, timer;
+  const stop = () => { clearTimeout(delay); clearInterval(timer); b.classList.remove('down'); };
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); b.classList.add('down'); key(code);
+    if (repeat) delay = setTimeout(() => { timer = setInterval(() => key(code), 130); }, 420);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => b.addEventListener(ev, stop));
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+});
+
+// OK: tap = press, hold = long press (Glass TV: hold OK on an app for Move / App info)
+(() => {
+  const b = $('#ok'); let timer, held = false, active = false;
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); active = true; held = false; b.classList.add('down');
+    timer = setTimeout(() => { held = true; key(23, true); }, 550);
+  });
+  const end = (fire) => {
+    if (!active) return; active = false; clearTimeout(timer); b.classList.remove('down');
+    if (fire && !held) key(23);
+  };
+  b.addEventListener('pointerup', () => end(true));
+  b.addEventListener('pointercancel', () => end(false));
+  b.addEventListener('pointerleave', () => end(false));
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+})();
+
+// ---- typing ----
+async function sendText() {
+  const input = $('#text'); const t = input.value; if (!t) return;
+  const r = await api('/api/text', { t }).catch(() => null);
+  if (r && r.ok) { input.value = ''; buzz(); } else toast('Could not type on the TV');
+}
+$('#sendText').addEventListener('click', sendText);
+$('#text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendText(); } });
+
+// ---- tabs & apps ----
+let appsLoaded = false;
+document.querySelectorAll('.tabs button').forEach((t) => t.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('sel', x === t));
+  $('#remote').hidden = t.dataset.tab !== 'remote';
+  $('#apps').hidden = t.dataset.tab !== 'apps';
+  if (t.dataset.tab === 'apps' && !appsLoaded) loadApps();
+}));
+
+async function loadApps() {
+  const r = await api('/api/apps').catch(() => null);
+  if (!r || !r.ok) { toast('Could not load apps'); return; }
+  appsLoaded = true;
+  const grid = $('#appGrid'); grid.innerHTML = '';
+  for (const a of r.data) {
+    const b = document.createElement('button'); b.className = 'app';
+    const img = document.createElement('img'); img.loading = 'lazy'; img.alt = '';
+    img.src = '/api/icon?pkg=' + encodeURIComponent(a.pkg);
+    const s = document.createElement('span'); s.textContent = a.label;
+    b.append(img, s);
+    b.addEventListener('click', async () => {
+      buzz();
+      const res = await api('/api/launch', { pkg: a.pkg }).catch(() => null);
+      toast(res && res.ok ? 'Opening ' + a.label : 'Could not open ' + a.label);
+    });
+    grid.append(b);
+  }
+}
+
+// ---- pairing ----
+const pinInputs = [...document.querySelectorAll('#pin input')];
+$('#showCode').addEventListener('click', async () => {
+  $('#pairErr').textContent = '';
+  const r = await api('/api/pair/start', {}).catch(() => null);
+  if (!r) { $('#pairErr').textContent = 'Can\'t reach the box.'; return; }
+  if (!r.ok && r.status !== 429) { $('#pairErr').textContent = r.data.error || 'The TV could not show a code.'; return; }
+  $('#pin').hidden = false; $('#showCode').textContent = 'Show the code again';
+  pinInputs.forEach((i) => (i.value = '')); pinInputs[0].focus();
+});
+pinInputs.forEach((input, i) => {
+  input.addEventListener('input', () => {
+    input.value = input.value.replace(/\D/g, '').slice(-1);
+    if (input.value && i < 3) pinInputs[i + 1].focus();
+    const pin = pinInputs.map((x) => x.value).join('');
+    if (pin.length === 4) confirmPin(pin);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && !input.value && i > 0) pinInputs[i - 1].focus();
+  });
+});
+async function confirmPin(pin) {
+  const r = await api('/api/pair/confirm', { pin }).catch(() => null);
+  if (r && r.ok) { showMain(); status(); toast('Paired'); return; }
+  $('#pairErr').textContent = 'Wrong or expired code. Try again.';
+  pinInputs.forEach((x) => (x.value = '')); pinInputs[0].focus();
+}
+
+// ---- start ----
+(async () => {
+  const s = await status();
+  if (s && s.paired) showMain(); else showPair();
+  setInterval(status, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) status(); });
+})();
+</script>
+</body>
+</html>
