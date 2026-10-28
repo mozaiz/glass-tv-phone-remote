@@ -82,7 +82,30 @@ final class HttpServer {
         }, "http-accept");
         t.setDaemon(true);
         t.start();
+        // Mouse mode's virtual mouse goes away after two idle minutes, so the TV is not left thinking a
+        // mouse is plugged in (some apps change how they look and behave while one is).
+        Thread idle = new Thread(() -> {
+            while (!server.isClosed()) {
+                try {
+                    Thread.sleep(10_000);
+                    if (mouseOn && System.currentTimeMillis() - lastMouse > MOUSE_IDLE_MS) {
+                        mouseOn = false;
+                        svc.adb.command("mouseoff");
+                    }
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Exception e) {
+                    Log.i(TAG, "mouse idle: " + e);
+                }
+            }
+        }, "mouse-idle");
+        idle.setDaemon(true);
+        idle.start();
     }
+
+    private static final long MOUSE_IDLE_MS = 120_000;
+    private volatile boolean mouseOn;
+    private volatile long lastMouse;
 
     void stop() {
         try {
@@ -495,6 +518,10 @@ final class HttpServer {
                     : msg.startsWith("l:") ? keyLine(msg.substring(2), true)
                     : msg.startsWith("t:") ? textLine(msg.substring(2))
                     : msg.startsWith("m:") || msg.startsWith("c:") || msg.startsWith("w:") ? mouseLine(msg) : null;
+            if (line != null && line.matches("^(mouse|click|wheel) .*")) {
+                lastMouse = System.currentTimeMillis();
+                mouseOn = true;
+            }
             String reply;
             if (line == null) {
                 reply = "err:bad message";

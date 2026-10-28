@@ -93,6 +93,9 @@ public final class Injector {
             case "wheel":
                 Mouse.wheel(Integer.parseInt(arg.trim()));
                 break;
+            case "mouseoff":
+                Mouse.off();
+                break;
             default:
                 break;
         }
@@ -101,8 +104,8 @@ public final class Injector {
     /**
      * A virtual USB mouse, made with Android's own {@code hid} tool (the shell user may create HID
      * devices), so the system draws its real pointer and apps get ordinary mouse events. Injected
-     * mouse events alone would work but show no pointer. The device appears on first use and is
-     * removed after two idle minutes, so the TV is not left thinking a mouse is plugged in.
+     * mouse events alone would work but show no pointer. The device appears on first use; the app
+     * sends {@code mouseoff} after two idle minutes, so the TV is not left thinking a mouse is plugged in.
      */
     static final class Mouse {
         /** A 3-button wheel mouse: report = buttons, dx, dy, wheel (signed bytes, relative). */
@@ -110,10 +113,8 @@ public final class Injector {
                 0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
                 0x95, 0x01, 0x75, 0x05, 0x81, 0x03, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81,
                 0x25, 0x7F, 0x75, 0x08, 0x95, 0x03, 0x81, 0x06, 0xC0, 0xC0};
-        private static final long IDLE_MS = 120_000;
         private static Process hid;
         private static java.io.OutputStream out;
-        private static volatile long lastUse;
 
         static synchronized void move(int dx, int dy) throws Exception {
             // A report carries at most ±127 per axis; split a fast swipe into several.
@@ -143,17 +144,22 @@ public final class Injector {
             ensure();
             write("{\"id\":1,\"command\":\"report\",\"report\":[" + buttons + "," + (dx & 0xff) + ","
                     + (dy & 0xff) + "," + (wheel & 0xff) + "]}");
-            lastUse = SystemClock.uptimeMillis();
+        }
+
+        /** Removes the virtual mouse; the next move makes a new one. */
+        static synchronized void off() {
+            stop();
         }
 
         private static void ensure() throws Exception {
             if (hid != null && hid.isAlive()) return;
-            hid = new ProcessBuilder("hid", "-").redirectErrorStream(true).start();
-            out = hid.getOutputStream();
+            Process p = new ProcessBuilder("hid", "-").redirectErrorStream(true).start();
+            hid = p;
+            out = p.getOutputStream();
             Thread drain = new Thread(() -> {
                 try {
                     byte[] buf = new byte[512];
-                    while (hid.getInputStream().read(buf) > 0) { }
+                    while (p.getInputStream().read(buf) > 0) { }
                 } catch (Exception ignored) {
                 }
             });
@@ -164,27 +170,8 @@ public final class Injector {
             write("{\"id\":1,\"command\":\"register\",\"name\":\"Phone Remote mouse\",\"vid\":6353,\"pid\":20192,"
                     + "\"bus\":\"usb\",\"descriptor\":[" + d + "]}");
             // The input system needs a moment to add the device before the first report counts; at 300 ms
-            // the first moves were lost on the test box. This only happens once per two idle minutes.
+            // the first moves were lost on the test box. This only happens when the mouse is (re)created.
             Thread.sleep(800);
-            lastUse = SystemClock.uptimeMillis();
-            Thread idle = new Thread(() -> {
-                while (true) {
-                    try {
-                        Thread.sleep(5_000);
-                    } catch (InterruptedException e) {
-                        return;
-                    }
-                    synchronized (Mouse.class) {
-                        if (hid == null) return;
-                        if (SystemClock.uptimeMillis() - lastUse > IDLE_MS) {
-                            stop();
-                            return;
-                        }
-                    }
-                }
-            });
-            idle.setDaemon(true);
-            idle.start();
         }
 
         private static void write(String json) throws Exception {
