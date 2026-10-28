@@ -30,7 +30,8 @@ Made as an add-on for [Glass TV](https://github.com/cocombee/glass-tv), but it w
 - **Mouse mode:** a real pointer on the TV, like a laptop trackpad: slide to move (faster swipes go
   further), tap to click, hold for right-click (Back), two fingers to scroll. Handy in apps made for
   phones, like the phone Play Store, YouTube or Chrome. The box sees it as a USB mouse, which appears when
-  you first move it and goes away after two idle minutes.
+  you first move it and goes away after two idle minutes. On a TV that doesn't allow that, Phone Remote
+  draws its own pointer instead and clicks with taps, and the phone page says so.
 - **Show the TV screen:** a live picture of what's on the TV, every couple of seconds while it's open.
   Netflix and other protected video show black, as in any screenshot.
 - **Favourites:** up to six apps in a row at the top of the Remote tab. Star them in the Apps tab
@@ -98,7 +99,10 @@ starts a tiny helper from its own APK with `app_process`, the way
 each key through Android's InputManager, opens apps with `am start`, and takes screenshots for the live
 view (scaled to 640 px wide and sent back as JPEG). For Mouse mode it creates a virtual USB mouse with
 Android's own `hid` tool (`/dev/uhid`, which the shell user may open), so Android draws its real pointer;
-injected mouse events alone would click but show no pointer.
+injected mouse events alone would click but show no pointer. The helper checks that Android really added
+the mouse; where it didn't (a TV whose shell may not create HID devices), Phone Remote draws its own arrow
+over everything (the helper grants it the overlay permission), keeps the position itself, and sends taps
+and wheel events to that spot. `adb shell setprop debug.tvremote.nohid 1` forces this fallback for testing.
 
 Inputs come from Android's TV input framework (`TvInputManager`), the same way
 [Glass TV](https://github.com/cocombee/glass-tv)'s Inputs menu reads them on Xiaomi, TCL and Sony sets.
@@ -177,7 +181,9 @@ A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, wit
 - On/off: asleep and still reachable for six minutes, woken from the phone; the power-key path is
   turned into sleep/wake.
 - Mouse: the pointer appears and moves, a click opened Nuvio from Glass TV's dock, a right-click went
-  Back, and the wheel scrolled the Home grid.
+  Back, the wheel scrolled the Home grid, and the virtual mouse is removed after two idle minutes. With
+  the fallback forced, Phone Remote's own arrow appeared where expected and the same click, Back and
+  scroll worked.
 - Starting again after a reboot, and updating over the previous version with phones still paired.
 - Input switching on this box, which has no HDMI inputs of its own: the Input key reaches Android's
   input dispatcher, and a test app that registers a TV input and takes the switch intent like a Live TV
@@ -185,8 +191,8 @@ A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, wit
   `content://android.media.tv/passthrough/<id>`, with the id intact.
 
 **Not yet tried:** switching to a TV's own HDMI ports (only a TV's own system can create HDMI inputs, so
-no box or emulator can stand in), touchpad and mouse modes on a real phone, Mouse mode on boxes whose shell may not create HID devices,
-and the on/off button on other boxes.
+no box or emulator can stand in), touchpad and mouse modes on a real phone, Mouse mode on other boxes (the fallback was only tested by
+forcing it), and the on/off button on other boxes.
 If you have a Xiaomi, TCL or Sony Android TV, please try the Inputs tab and open an issue with what
 happened and a screenshot of TV info.
 
