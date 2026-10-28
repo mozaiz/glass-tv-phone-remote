@@ -2,8 +2,8 @@
 
 Turn any phone into a remote for an Android TV box. A small app on the box serves a web page at
 `http://<box ip>:8080`: scan the QR code on the TV, and you get a D-pad or a swipe touchpad, volume and
-media keys, typing into search fields, a live view of the screen, your favourite apps one tap away, and
-an on/off button. Nothing to install on the phone, no account, no cloud.
+media keys, a mouse pointer for apps not made for TVs, typing into search fields, a live view of the screen,
+your favourite apps one tap away, and an on/off button. Nothing to install on the phone, no account, no cloud.
 
 Made as an add-on for [Glass TV](https://github.com/cocombee/glass-tv), but it works with any launcher.
 
@@ -27,6 +27,10 @@ Made as an add-on for [Glass TV](https://github.com/cocombee/glass-tv), but it w
   so the TV opens its own source menu.
 - **Touchpad mode:** swipe anywhere to move the selection, tap for OK, hold for a long press. One hand,
   no aiming. The phone remembers which mode you like.
+- **Mouse mode:** a real pointer on the TV, like a laptop trackpad: slide to move (faster swipes go
+  further), tap to click, hold for right-click (Back), two fingers to scroll. Handy in apps made for
+  phones, like the phone Play Store, YouTube or Chrome. The box sees it as a USB mouse, which appears when
+  you first move it and goes away after two idle minutes.
 - **Show the TV screen:** a live picture of what's on the TV, every couple of seconds while it's open.
   Netflix and other protected video show black, as in any screenshot.
 - **Favourites:** up to six apps in a row at the top of the Remote tab. Star them in the Apps tab
@@ -92,7 +96,9 @@ first start the app connects to it at `127.0.0.1:5555` (the TV asks **Allow USB 
 starts a tiny helper from its own APK with `app_process`, the way
 [scrcpy](https://github.com/Genymobile/scrcpy) does. The helper stays running as the shell user, injects
 each key through Android's InputManager, opens apps with `am start`, and takes screenshots for the live
-view (scaled to 640 px wide and sent back as JPEG).
+view (scaled to 640 px wide and sent back as JPEG). For Mouse mode it creates a virtual USB mouse with
+Android's own `hid` tool (`/dev/uhid`, which the shell user may open), so Android draws its real pointer;
+injected mouse events alone would click but show no pointer.
 
 Inputs come from Android's TV input framework (`TvInputManager`), the same way
 [Glass TV](https://github.com/cocombee/glass-tv)'s Inputs menu reads them on Xiaomi, TCL and Sony sets.
@@ -170,6 +176,8 @@ A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, wit
 - A Shortcuts key with no cookie presses keys; a wrong key is refused; forgetting it revokes it.
 - On/off: asleep and still reachable for six minutes, woken from the phone; the power-key path is
   turned into sleep/wake.
+- Mouse: the pointer appears and moves, a click opened Nuvio from Glass TV's dock, a right-click went
+  Back, and the wheel scrolled the Home grid.
 - Starting again after a reboot, and updating over the previous version with phones still paired.
 - Input switching on this box, which has no HDMI inputs of its own: the Input key reaches Android's
   input dispatcher, and a test app that registers a TV input and takes the switch intent like a Live TV
@@ -177,7 +185,8 @@ A generic Allwinner H618 box (model MBOX), Android 10 TV (SDK 29), 1280x720, wit
   `content://android.media.tv/passthrough/<id>`, with the id intact.
 
 **Not yet tried:** switching to a TV's own HDMI ports (only a TV's own system can create HDMI inputs, so
-no box or emulator can stand in), touchpad mode on a real phone, and the on/off button on other boxes.
+no box or emulator can stand in), touchpad and mouse modes on a real phone, Mouse mode on boxes whose shell may not create HID devices,
+and the on/off button on other boxes.
 If you have a Xiaomi, TCL or Sony Android TV, please try the Inputs tab and open an issue with what
 happened and a screenshot of TV info.
 

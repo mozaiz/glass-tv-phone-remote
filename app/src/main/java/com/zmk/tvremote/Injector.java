@@ -163,8 +163,9 @@ public final class Injector {
             for (int b : DESCRIPTOR) d.append(d.length() == 0 ? "" : ",").append(b);
             write("{\"id\":1,\"command\":\"register\",\"name\":\"Phone Remote mouse\",\"vid\":6353,\"pid\":20192,"
                     + "\"bus\":\"usb\",\"descriptor\":[" + d + "]}");
-            // The input system needs a moment to add the device before the first report counts.
-            Thread.sleep(300);
+            // The input system needs a moment to add the device before the first report counts; at 300 ms
+            // the first moves were lost on the test box. This only happens once per two idle minutes.
+            Thread.sleep(800);
             lastUse = SystemClock.uptimeMillis();
             Thread idle = new Thread(() -> {
                 while (true) {
