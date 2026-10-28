@@ -26,15 +26,20 @@ jobs:
           packages: platforms;android-34 build-tools;34.0.0
       - uses: gradle/actions/setup-gradle@v4
 
+      # Every build in this repository is signed with the release key, so any build's artifact installs
+      # over a release. Pull requests from forks get no secrets and fall back to the debug key.
       - name: Release key
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
           STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          test -n "$KEYSTORE_B64" || { echo "RELEASE_KEYSTORE_B64 secret is missing"; exit 1; }
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No release key available; this build is signed with the debug key."
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "A release needs the key."; exit 1; fi
+            exit 0
+          fi
           mkdir -p keystore
           echo "$KEYSTORE_B64" | base64 -d > keystore/release.keystore
           printf 'storeFile=release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \

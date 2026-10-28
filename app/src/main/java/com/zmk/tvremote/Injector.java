@@ -25,7 +25,8 @@ import java.util.Base64;
  * milliseconds instead of starting {@code input keyevent} every time.
  *
  * Commands: {@code key <code>}, {@code long <code>}, {@code text <chars>}, {@code start <component> <category>},
- * {@code view <channel uri>}, {@code shot}, {@code pin}. Anything else is ignored.
+ * {@code view <channel uri>}, {@code shot}, {@code pin}, {@code mouse <dx> <dy>}, {@code click <1|2>},
+ * {@code wheel <steps>}. Anything else is ignored.
  */
 public final class Injector {
     private static Object inputManager;
@@ -81,8 +82,123 @@ public final class Injector {
             case "pin":
                 run("am", "start", "-n", "com.zmk.tvremote/.PinActivity");
                 break;
+            case "mouse": {
+                String[] d = arg.trim().split(" ");
+                Mouse.move(Integer.parseInt(d[0]), Integer.parseInt(d[1]));
+                break;
+            }
+            case "click":
+                Mouse.click(Integer.parseInt(arg.trim()));
+                break;
+            case "wheel":
+                Mouse.wheel(Integer.parseInt(arg.trim()));
+                break;
             default:
                 break;
+        }
+    }
+
+    /**
+     * A virtual USB mouse, made with Android's own {@code hid} tool (the shell user may create HID
+     * devices), so the system draws its real pointer and apps get ordinary mouse events. Injected
+     * mouse events alone would work but show no pointer. The device appears on first use and is
+     * removed after two idle minutes, so the TV is not left thinking a mouse is plugged in.
+     */
+    static final class Mouse {
+        /** A 3-button wheel mouse: report = buttons, dx, dy, wheel (signed bytes, relative). */
+        private static final int[] DESCRIPTOR = {0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00,
+                0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
+                0x95, 0x01, 0x75, 0x05, 0x81, 0x03, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81,
+                0x25, 0x7F, 0x75, 0x08, 0x95, 0x03, 0x81, 0x06, 0xC0, 0xC0};
+        private static final long IDLE_MS = 120_000;
+        private static Process hid;
+        private static java.io.OutputStream out;
+        private static volatile long lastUse;
+
+        static synchronized void move(int dx, int dy) throws Exception {
+            // A report carries at most ±127 per axis; split a fast swipe into several.
+            while (dx != 0 || dy != 0) {
+                int sx = Math.max(-127, Math.min(127, dx)), sy = Math.max(-127, Math.min(127, dy));
+                report(0, sx, sy, 0);
+                dx -= sx;
+                dy -= sy;
+            }
+        }
+
+        /** 1 = left (a tap), 2 = right (Android treats it as Back). */
+        static synchronized void click(int button) throws Exception {
+            int bits = button == 2 ? 2 : 1;
+            report(bits, 0, 0, 0);
+            Thread.sleep(30);
+            report(0, 0, 0, 0);
+        }
+
+        /** Positive scrolls up, negative down, one notch per step. */
+        static synchronized void wheel(int steps) throws Exception {
+            int n = Math.max(-20, Math.min(20, steps));
+            for (int i = 0; i < Math.abs(n); i++) report(0, 0, 0, n > 0 ? 1 : -1);
+        }
+
+        private static void report(int buttons, int dx, int dy, int wheel) throws Exception {
+            ensure();
+            write("{\"id\":1,\"command\":\"report\",\"report\":[" + buttons + "," + (dx & 0xff) + ","
+                    + (dy & 0xff) + "," + (wheel & 0xff) + "]}");
+            lastUse = SystemClock.uptimeMillis();
+        }
+
+        private static void ensure() throws Exception {
+            if (hid != null && hid.isAlive()) return;
+            hid = new ProcessBuilder("hid", "-").redirectErrorStream(true).start();
+            out = hid.getOutputStream();
+            Thread drain = new Thread(() -> {
+                try {
+                    byte[] buf = new byte[512];
+                    while (hid.getInputStream().read(buf) > 0) { }
+                } catch (Exception ignored) {
+                }
+            });
+            drain.setDaemon(true);
+            drain.start();
+            StringBuilder d = new StringBuilder();
+            for (int b : DESCRIPTOR) d.append(d.length() == 0 ? "" : ",").append(b);
+            write("{\"id\":1,\"command\":\"register\",\"name\":\"Phone Remote mouse\",\"vid\":6353,\"pid\":20192,"
+                    + "\"bus\":\"usb\",\"descriptor\":[" + d + "]}");
+            // The input system needs a moment to add the device before the first report counts.
+            Thread.sleep(300);
+            lastUse = SystemClock.uptimeMillis();
+            Thread idle = new Thread(() -> {
+                while (true) {
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    synchronized (Mouse.class) {
+                        if (hid == null) return;
+                        if (SystemClock.uptimeMillis() - lastUse > IDLE_MS) {
+                            stop();
+                            return;
+                        }
+                    }
+                }
+            });
+            idle.setDaemon(true);
+            idle.start();
+        }
+
+        private static void write(String json) throws Exception {
+            out.write((json + "\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+
+        private static void stop() {
+            try {
+                out.close();
+            } catch (Exception ignored) {
+            }
+            if (hid != null) hid.destroy();
+            hid = null;
+            out = null;
         }
     }
 

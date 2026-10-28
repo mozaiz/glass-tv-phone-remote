@@ -36,8 +36,8 @@
   .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--panel); border-radius: 12px; padding: 4px; }
   .tabs button, .seg button { background: none; border: 0; color: var(--muted); font: inherit; padding: 9px; border-radius: 9px; }
   .tabs button.sel, .seg button.sel { background: var(--key-hi); color: var(--text); }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border-radius: 10px; padding: 3px;
-    width: 220px; margin: 0 auto; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--panel); border-radius: 10px; padding: 3px;
+    width: 300px; max-width: 100%; margin: 0 auto; }
   .seg button { padding: 6px; font-size: 13px; border-radius: 8px; }
   button.k { background: var(--key); color: var(--text); border: 0; border-radius: 16px; font: inherit;
     font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 6px; height: 56px;
@@ -172,6 +172,7 @@
       <div class="seg" id="modeSeg">
         <button class="sel" data-mode="buttons">Buttons</button>
         <button data-mode="touch">Touchpad</button>
+        <button data-mode="mouse">Mouse</button>
       </div>
 
       <div class="pad" id="pad">
@@ -182,6 +183,7 @@
         <button class="d" data-key="20" data-repeat aria-label="Down"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
       </div>
       <div class="touch" id="touch" hidden>Swipe to move · tap for OK · hold for a long press</div>
+      <div class="touch" id="mousepad" hidden>Slide to move the pointer · tap to click<br>hold for Back · two fingers to scroll</div>
       <div class="hint" id="padHint">Hold OK for a long press</div>
 
       <div class="row3">
@@ -379,12 +381,70 @@ document.querySelectorAll('[data-key]').forEach((b) => {
 
   const setMode = (m) => {
     document.querySelectorAll('#modeSeg button').forEach((b) => b.classList.toggle('sel', b.dataset.mode === m));
-    $('#pad').hidden = m !== 'buttons'; pad.hidden = m !== 'touch';
+    $('#pad').hidden = m !== 'buttons'; pad.hidden = m !== 'touch'; $('#mousepad').hidden = m !== 'mouse';
     $('#padHint').hidden = m !== 'buttons';
     store.set('mode', m);
   };
   document.querySelectorAll('#modeSeg button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
   setMode(store.get('mode', 'buttons'));
+})();
+
+// ---- mouse: a real pointer on the TV (a virtual USB mouse on the box) ----
+(() => {
+  const pad = $('#mousepad'), pts = new Map(), SENS = 1.4, SCROLL = 28;
+  let accX = 0, accY = 0, wheelAcc = 0, raf = 0, start = null, moved = false, held = false, multi = false, holdTimer;
+  const send = (m) => {
+    if (live()) { ws.send(m); return true; }
+    openSocket(); toast('Reconnecting…'); return false;
+  };
+  const flush = () => {
+    raf = 0;
+    const dx = Math.trunc(accX), dy = Math.trunc(accY);
+    if ((dx || dy) && send('m:' + dx + ',' + dy)) { accX -= dx; accY -= dy; }
+  };
+  const ripple = (x, y) => {
+    const r = pad.getBoundingClientRect(), d = document.createElement('span');
+    d.className = 'ripple'; d.style.left = (x - r.left) + 'px'; d.style.top = (y - r.top) + 'px';
+    pad.append(d); setTimeout(() => d.remove(), 400);
+  };
+  pad.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); pad.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) {
+      start = { x: e.clientX, y: e.clientY, t: performance.now() }; moved = held = multi = false; wheelAcc = 0;
+      holdTimer = setTimeout(() => {
+        if (!moved && pts.size === 1) { held = true; buzz(); ripple(start.x, start.y); send('c:2'); }
+      }, 550);
+    } else { multi = true; clearTimeout(holdTimer); }
+  });
+  pad.addEventListener('pointermove', (e) => {
+    const p = pts.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (!moved && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) { moved = true; clearTimeout(holdTimer); }
+    if (pts.size >= 2) {
+      // Two fingers: scroll. Fingers down = content moves down (wheel up), like a phone.
+      if (e.pointerId !== [...pts.keys()][0]) return;
+      wheelAcc += dy;
+      const steps = Math.trunc(wheelAcc / SCROLL);
+      if (steps) { send('w:' + steps); wheelAcc -= steps * SCROLL; }
+      return;
+    }
+    // Faster swipes go further, like a laptop trackpad.
+    const v = Math.hypot(dx, dy), gain = SENS * (v > 14 ? 2.4 : v > 6 ? 1.6 : 1);
+    accX += dx * gain; accY += dy * gain;
+    if (!raf) raf = requestAnimationFrame(flush);
+  });
+  const end = (e, fire) => {
+    if (!pts.delete(e.pointerId)) return;
+    if (pts.size) return;
+    clearTimeout(holdTimer);
+    if (fire && !moved && !held && !multi && performance.now() - start.t < 300) {
+      buzz(); ripple(e.clientX, e.clientY); send('c:1');
+    }
+  };
+  pad.addEventListener('pointerup', (e) => end(e, true));
+  pad.addEventListener('pointercancel', (e) => end(e, false));
+  pad.addEventListener('contextmenu', (e) => e.preventDefault());
 })();
 
 // ---- power ----

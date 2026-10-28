@@ -387,6 +387,29 @@ final class HttpServer {
         return (hold ? "long " : "key ") + c;
     }
 
+    /** Mouse mode: {@code m:<dx>,<dy>} moves, {@code c:1} clicks (2 = right, Back), {@code w:<n>} scrolls. */
+    private static String mouseLine(String msg) {
+        try {
+            String v = msg.substring(2);
+            switch (msg.charAt(0)) {
+                case 'm': {
+                    String[] d = v.split(",");
+                    int dx = Math.max(-2000, Math.min(2000, Integer.parseInt(d[0].trim())));
+                    int dy = Math.max(-2000, Math.min(2000, Integer.parseInt(d[1].trim())));
+                    return "mouse " + dx + " " + dy;
+                }
+                case 'c':
+                    return "click " + ("2".equals(v.trim()) ? 2 : 1);
+                case 'w':
+                    return "wheel " + Math.max(-20, Math.min(20, Integer.parseInt(v.trim())));
+                default:
+                    return null;
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static String textLine(String t) {
         if (t == null) return null;
         t = t.replace('\n', ' ').replace('\r', ' ');
@@ -470,7 +493,8 @@ final class HttpServer {
             String msg = new String(data, StandardCharsets.UTF_8);
             String line = msg.startsWith("k:") ? keyLine(msg.substring(2), false)
                     : msg.startsWith("l:") ? keyLine(msg.substring(2), true)
-                    : msg.startsWith("t:") ? textLine(msg.substring(2)) : null;
+                    : msg.startsWith("t:") ? textLine(msg.substring(2))
+                    : msg.startsWith("m:") || msg.startsWith("c:") || msg.startsWith("w:") ? mouseLine(msg) : null;
             String reply;
             if (line == null) {
                 reply = "err:bad message";
