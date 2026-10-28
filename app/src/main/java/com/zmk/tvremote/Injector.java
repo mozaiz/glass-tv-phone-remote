@@ -8,6 +8,7 @@ import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -26,7 +27,8 @@ import java.util.Base64;
  *
  * Commands: {@code key <code>}, {@code long <code>}, {@code text <chars>}, {@code start <component> <category>},
  * {@code view <channel uri>}, {@code shot}, {@code pin}, {@code mouse <dx> <dy>}, {@code click <1|2>},
- * {@code wheel <steps>}. Anything else is ignored.
+ * {@code wheel <steps>}, {@code mouseoff}, {@code tap <x> <y>}, {@code scroll <x> <y> <steps>}, {@code overlay}.
+ * Anything else is ignored.
  */
 public final class Injector {
     private static Object inputManager;
@@ -96,6 +98,22 @@ public final class Injector {
             case "mouseoff":
                 Mouse.off();
                 break;
+            case "tap": {
+                String[] d = arg.trim().split(" ");
+                tap(Integer.parseInt(d[0]), Integer.parseInt(d[1]));
+                break;
+            }
+            case "scroll": {
+                String[] d = arg.trim().split(" ");
+                scroll(Integer.parseInt(d[0]), Integer.parseInt(d[1]), Integer.parseInt(d[2]));
+                break;
+            }
+            case "overlay":
+                // Lets the app draw its own pointer when the TV allows no virtual mouse (shell may grant this).
+                run("appops", "set", "com.zmk.tvremote", "SYSTEM_ALERT_WINDOW", "allow");
+                System.out.println("overlay granted");
+                System.out.flush();
+                break;
             default:
                 break;
         }
@@ -106,6 +124,10 @@ public final class Injector {
      * devices), so the system draws its real pointer and apps get ordinary mouse events. Injected
      * mouse events alone would work but show no pointer. The device appears on first use; the app
      * sends {@code mouseoff} after two idle minutes, so the TV is not left thinking a mouse is plugged in.
+     *
+     * Some TVs may not let the shell create HID devices. The first use checks that Android really added
+     * the mouse and prints {@code pointer virtual} or {@code pointer fallback}; on fallback the app draws
+     * its own pointer and sends absolute {@code tap} and {@code scroll} commands instead.
      */
     static final class Mouse {
         /** A 3-button wheel mouse: report = buttons, dx, dy, wheel (signed bytes, relative). */
@@ -113,8 +135,11 @@ public final class Injector {
                 0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
                 0x95, 0x01, 0x75, 0x05, 0x81, 0x03, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81,
                 0x25, 0x7F, 0x75, 0x08, 0x95, 0x03, 0x81, 0x06, 0xC0, 0xC0};
+        private static final String NAME = "Phone Remote mouse";
         private static Process hid;
         private static java.io.OutputStream out;
+        /** Set once creating the mouse failed; the app then uses the fallback and stops sending moves. */
+        private static boolean failed;
 
         static synchronized void move(int dx, int dy) throws Exception {
             // A report carries at most ±127 per axis; split a fast swipe into several.
@@ -141,7 +166,7 @@ public final class Injector {
         }
 
         private static void report(int buttons, int dx, int dy, int wheel) throws Exception {
-            ensure();
+            if (failed || !ensure()) return;
             write("{\"id\":1,\"command\":\"report\",\"report\":[" + buttons + "," + (dx & 0xff) + ","
                     + (dy & 0xff) + "," + (wheel & 0xff) + "]}");
         }
@@ -151,9 +176,17 @@ public final class Injector {
             stop();
         }
 
-        private static void ensure() throws Exception {
-            if (hid != null && hid.isAlive()) return;
-            Process p = new ProcessBuilder("hid", "-").redirectErrorStream(true).start();
+        /** Makes the mouse if needed; false when this TV does not allow it (reported once to the app). */
+        private static boolean ensure() throws Exception {
+            if (hid != null && hid.isAlive()) return true;
+            // debug.tvremote.nohid=1 (settable by the shell) forces the fallback, for testing it.
+            if ("1".equals(prop("debug.tvremote.nohid"))) return fail();
+            Process p;
+            try {
+                p = new ProcessBuilder("hid", "-").redirectErrorStream(true).start();
+            } catch (Exception e) {
+                return fail();
+            }
             hid = p;
             out = p.getOutputStream();
             Thread drain = new Thread(() -> {
@@ -167,11 +200,54 @@ public final class Injector {
             drain.start();
             StringBuilder d = new StringBuilder();
             for (int b : DESCRIPTOR) d.append(d.length() == 0 ? "" : ",").append(b);
-            write("{\"id\":1,\"command\":\"register\",\"name\":\"Phone Remote mouse\",\"vid\":6353,\"pid\":20192,"
-                    + "\"bus\":\"usb\",\"descriptor\":[" + d + "]}");
-            // The input system needs a moment to add the device before the first report counts; at 300 ms
-            // the first moves were lost on the test box. This only happens when the mouse is (re)created.
-            Thread.sleep(800);
+            try {
+                write("{\"id\":1,\"command\":\"register\",\"name\":\"" + NAME + "\",\"vid\":6353,\"pid\":20192,"
+                        + "\"bus\":\"usb\",\"descriptor\":[" + d + "]}");
+            } catch (Exception e) {
+                return fail();
+            }
+            // Wait until Android has added the device: reports sent before that are lost (300 ms was too
+            // short on the test box), and a device that never appears means this TV does not allow it.
+            for (int i = 0; i < 20; i++) {
+                Thread.sleep(100);
+                if (added()) {
+                    Thread.sleep(300);
+                    System.out.println("pointer virtual");
+                    System.out.flush();
+                    return true;
+                }
+                if (!p.isAlive()) break;
+            }
+            return fail();
+        }
+
+        private static boolean fail() {
+            stop();
+            failed = true;
+            System.out.println("pointer fallback");
+            System.out.flush();
+            return false;
+        }
+
+        private static boolean added() {
+            InputManager im = (InputManager) inputManager;
+            for (int id : im.getInputDeviceIds()) {
+                InputDevice dev = im.getInputDevice(id);
+                if (dev != null && NAME.equals(dev.getName())) return true;
+            }
+            return false;
+        }
+
+        private static String prop(String key) {
+            try {
+                Process p = new ProcessBuilder("getprop", key).start();
+                byte[] b = new byte[64];
+                int n = p.getInputStream().read(b);
+                p.waitFor();
+                return n > 0 ? new String(b, 0, n, StandardCharsets.UTF_8).trim() : "";
+            } catch (Exception e) {
+                return "";
+            }
         }
 
         private static void write(String json) throws Exception {
@@ -205,6 +281,34 @@ public final class Injector {
     private static KeyEvent key(long down, long when, int action, int code, int repeat, int flags) {
         return new KeyEvent(down, when, action, code, repeat, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 flags | KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD);
+    }
+
+    /** A tap at screen coordinates, as a finger would: the fallback's click. */
+    private static void tap(int x, int y) throws Exception {
+        long t = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0);
+        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        send(down);
+        Thread.sleep(40);
+        MotionEvent up = MotionEvent.obtain(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0);
+        up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        send(up);
+    }
+
+    /** A mouse-wheel scroll at screen coordinates: positive scrolls up, negative down. */
+    private static void scroll(int x, int y, int steps) throws Exception {
+        MotionEvent.PointerProperties pp = new MotionEvent.PointerProperties();
+        pp.id = 0;
+        pp.toolType = MotionEvent.TOOL_TYPE_MOUSE;
+        MotionEvent.PointerCoords pc = new MotionEvent.PointerCoords();
+        pc.x = x;
+        pc.y = y;
+        pc.setAxisValue(MotionEvent.AXIS_VSCROLL, Math.max(-20, Math.min(20, steps)));
+        long t = SystemClock.uptimeMillis();
+        MotionEvent e = MotionEvent.obtain(t, t, MotionEvent.ACTION_SCROLL, 1,
+                new MotionEvent.PointerProperties[]{pp}, new MotionEvent.PointerCoords[]{pc},
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0);
+        send(e);
     }
 
     /** Types text into whatever field has focus. Characters the virtual keyboard map lacks are skipped. */

@@ -1,0 +1,13 @@
+<!-- Mouse mode's fallback pointer: a white arrow with a dark outline, tip at the top-left corner. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#111116"
+        android:strokeWidth="1.4"
+        android:strokeLineJoin="round"
+        android:pathData="M1,1 L1,18.5 L5.6,14.4 L8.7,21.6 L11.9,20.2 L8.8,13.1 L15,13.1 Z" />
+</vector>

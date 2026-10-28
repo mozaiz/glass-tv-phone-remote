@@ -193,6 +193,9 @@ final class Adb {
         }
     }
 
+    /** Mouse mode's pointer, as the helper reported it: "unknown" until first use, "virtual" or "fallback". */
+    volatile String pointer = "unknown";
+
     /** The helper's output arrives in pieces; whole lines go to their waiter or the log. */
     private final StringBuilder partial = new StringBuilder();
     private final BlockingQueue<String> shots = new LinkedBlockingQueue<>();
@@ -204,6 +207,7 @@ final class Adb {
             String line = partial.substring(0, nl).trim();
             partial.delete(0, nl + 1);
             if (line.startsWith("shot")) shots.offer(line.substring(4).trim());
+            else if (line.startsWith("pointer ")) pointer = line.substring(8).trim();
             else if (!line.isEmpty()) Log.i(TAG, "helper: " + line);
         }
     }

@@ -184,6 +184,7 @@
       </div>
       <div class="touch" id="touch" hidden>Swipe to move · tap for OK · hold for a long press</div>
       <div class="touch" id="mousepad" hidden>Slide to move the pointer · tap to click<br>hold for Back · two fingers to scroll</div>
+      <div class="hint" id="mouseNote" hidden></div>
       <div class="hint" id="padHint">Hold OK for a long press</div>
 
       <div class="row3">
@@ -283,6 +284,14 @@ async function status() {
     const r = await api('/api/status');
     const d = r.data;
     setConn(d.tv && d.awake, !d.tv ? (d.state || 'TV not ready') : d.awake ? 'Connected' : 'Asleep');
+    // Mouse mode: say so when this TV allows no system pointer and Phone Remote draws its own (or none).
+    const note = $('#mouseNote');
+    note.textContent = d.pointer === 'overlay'
+      ? 'This TV doesn\'t allow a system mouse, so Phone Remote draws its own pointer.'
+      : d.pointer === 'none'
+        ? 'This TV allows no pointer to be shown. Clicks still land where it would be, starting from the centre.'
+        : '';
+    note.hidden = !note.textContent;
     return d;
   } catch (e) {
     setConn(false, 'Box unreachable');

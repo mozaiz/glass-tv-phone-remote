@@ -66,6 +66,7 @@ final class HttpServer {
         this.svc = svc;
         this.port = port;
         prefs = svc.getSharedPreferences("remote", Context.MODE_PRIVATE);
+        overlay = new CursorOverlay(svc);
     }
 
     void start() throws IOException {
@@ -90,6 +91,7 @@ final class HttpServer {
                     Thread.sleep(10_000);
                     if (mouseOn && System.currentTimeMillis() - lastMouse > MOUSE_IDLE_MS) {
                         mouseOn = false;
+                        overlay.remove();
                         svc.adb.command("mouseoff");
                     }
                 } catch (InterruptedException e) {
@@ -106,6 +108,8 @@ final class HttpServer {
     private static final long MOUSE_IDLE_MS = 120_000;
     private volatile boolean mouseOn;
     private volatile long lastMouse;
+    private volatile boolean overlayAsked;
+    private final CursorOverlay overlay;
 
     void stop() {
         try {
@@ -236,7 +240,7 @@ final class HttpServer {
         switch (r.path) {
             case "/api/status": {
                 JSONObject o = new JSONObject().put("paired", paired).put("tv", svc.adb.alive())
-                        .put("state", svc.adb.state()).put("awake", awake());
+                        .put("state", svc.adb.state()).put("awake", awake()).put("pointer", pointerMode());
                 json(out, 200, o.toString(), null);
                 return;
             }
@@ -410,6 +414,56 @@ final class HttpServer {
         return (hold ? "long " : "key ") + c;
     }
 
+    /**
+     * One Mouse mode message. Normally it goes to the helper's virtual mouse, so Android draws its own
+     * pointer. Once the helper has reported that this TV allows no virtual mouse, the pointer is
+     * Phone Remote's own arrow ({@link CursorOverlay}), and clicks and scrolls go to its position as a tap
+     * and a wheel event; right-click becomes Back.
+     */
+    private String mouse(String msg) {
+        String line = mouseLine(msg);
+        if (line == null) return "err:bad message";
+        lastMouse = System.currentTimeMillis();
+        mouseOn = true;
+        try {
+            if (!"fallback".equals(svc.adb.pointer)) {
+                svc.adb.command(line);
+                return "ok";
+            }
+            if (!overlayAsked) {
+                overlayAsked = true;
+                svc.adb.command("overlay");
+            }
+            String[] v = msg.substring(2).split(",");
+            switch (msg.charAt(0)) {
+                case 'm':
+                    overlay.move(Integer.parseInt(v[0].trim()), Integer.parseInt(v[1].trim()));
+                    return "ok";
+                case 'c': {
+                    int[] p = overlay.position();
+                    svc.adb.command("2".equals(v[0].trim()) ? "key 4" : "tap " + p[0] + " " + p[1]);
+                    return "ok";
+                }
+                default: {
+                    int[] p = overlay.position();
+                    svc.adb.command("scroll " + p[0] + " " + p[1] + " " + line.substring(6));
+                    return "ok";
+                }
+            }
+        } catch (IOException e) {
+            return "err:" + e.getMessage();
+        } catch (RuntimeException e) {
+            return "err:bad message";
+        }
+    }
+
+    /** Which pointer Mouse mode uses: unknown (not used yet), virtual, overlay (our arrow), or none. */
+    private String pointerMode() {
+        String p = svc.adb.pointer;
+        if (!"fallback".equals(p)) return p;
+        return overlay.allowed() ? "overlay" : "none";
+    }
+
     /** Mouse mode: {@code m:<dx>,<dy>} moves, {@code c:1} clicks (2 = right, Back), {@code w:<n>} scrolls. */
     private static String mouseLine(String msg) {
         try {
@@ -514,14 +568,13 @@ final class HttpServer {
                 return;
             }
             String msg = new String(data, StandardCharsets.UTF_8);
+            if (msg.startsWith("m:") || msg.startsWith("c:") || msg.startsWith("w:")) {
+                frame(out, 0x1, mouse(msg).getBytes(StandardCharsets.UTF_8));
+                continue;
+            }
             String line = msg.startsWith("k:") ? keyLine(msg.substring(2), false)
                     : msg.startsWith("l:") ? keyLine(msg.substring(2), true)
-                    : msg.startsWith("t:") ? textLine(msg.substring(2))
-                    : msg.startsWith("m:") || msg.startsWith("c:") || msg.startsWith("w:") ? mouseLine(msg) : null;
-            if (line != null && line.matches("^(mouse|click|wheel) .*")) {
-                lastMouse = System.currentTimeMillis();
-                mouseOn = true;
-            }
+                    : msg.startsWith("t:") ? textLine(msg.substring(2)) : null;
             String reply;
             if (line == null) {
                 reply = "err:bad message";
